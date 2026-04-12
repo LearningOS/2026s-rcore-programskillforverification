@@ -21,6 +21,8 @@ use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
+const MAX_SYSCALL_NUM: usize = 512;
+
 pub use context::TaskContext;
 
 /// The task manager, where all the tasks are managed.
@@ -45,6 +47,8 @@ pub struct TaskManagerInner {
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+    /// syscall count for each task indexed by syscall id
+    syscall_count: [[usize; MAX_SYSCALL_NUM]; MAX_APP_NUM],
 }
 
 lazy_static! {
@@ -65,6 +69,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscall_count: [[0; MAX_SYSCALL_NUM]; MAX_APP_NUM],
                 })
             },
         }
@@ -168,4 +173,24 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Record one syscall invocation for current task.
+pub fn record_current_syscall(syscall_id: usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    if syscall_id < MAX_SYSCALL_NUM {
+        inner.syscall_count[current][syscall_id] += 1;
+    }
+}
+
+/// Query syscall invocation count of current task by syscall id.
+pub fn query_current_syscall_count(syscall_id: usize) -> isize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    if syscall_id < MAX_SYSCALL_NUM {
+        inner.syscall_count[current][syscall_id] as isize
+    } else {
+        -1
+    }
 }
