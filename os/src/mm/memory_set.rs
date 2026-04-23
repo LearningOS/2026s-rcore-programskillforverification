@@ -262,6 +262,78 @@ impl MemorySet {
             false
         }
     }
+
+    /// Map a user-range `[start_va, end_va)` with the given permission. Fails if any
+    /// page in the range is already mapped.
+    pub fn mmap(&mut self, start_va: VirtAddr, end_va: VirtAddr, perm: MapPermission) -> isize {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            if let Some(pte) = self.page_table.translate(vpn) {
+                if pte.is_valid() {
+                    return -1;
+                }
+            }
+        }
+        self.insert_framed_area(start_va, end_va, perm);
+        0
+    }
+
+    /// Unmap a user-range `[start_va, end_va)`. Fails if any page in the range is
+    /// not currently mapped.
+    pub fn munmap(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> isize {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            match self.page_table.translate(vpn) {
+                Some(pte) if pte.is_valid() => {}
+                _ => return -1,
+            }
+        }
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            for area in self.areas.iter_mut() {
+                if area.vpn_range.get_start() <= vpn && vpn < area.vpn_range.get_end() {
+                    area.unmap_one(&mut self.page_table, vpn);
+                    break;
+                }
+            }
+        }
+        0
+    }
+
+    /// Read one byte from user VA, requiring V+U+R flags.
+    pub fn read_user_byte(&self, va: VirtAddr) -> Option<u8> {
+        let pte = self.page_table.translate(va.floor())?;
+        let flags = pte.flags();
+        if !pte.is_valid()
+            || !flags.contains(PTEFlags::U)
+            || !flags.contains(PTEFlags::R)
+        {
+            return None;
+        }
+        let pa: PhysAddr = pte.ppn().into();
+        let addr = pa.0 + va.page_offset();
+        Some(unsafe { core::ptr::read_volatile(addr as *const u8) })
+    }
+
+    /// Write one byte to user VA, requiring V+U+W flags.
+    pub fn write_user_byte(&self, va: VirtAddr, byte: u8) -> bool {
+        let pte = match self.page_table.translate(va.floor()) {
+            Some(pte) => pte,
+            None => return false,
+        };
+        let flags = pte.flags();
+        if !pte.is_valid()
+            || !flags.contains(PTEFlags::U)
+            || !flags.contains(PTEFlags::W)
+        {
+            return false;
+        }
+        let pa: PhysAddr = pte.ppn().into();
+        let addr = pa.0 + va.page_offset();
+        unsafe { core::ptr::write_volatile(addr as *mut u8, byte) };
+        true
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {

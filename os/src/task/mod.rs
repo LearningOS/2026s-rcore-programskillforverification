@@ -15,6 +15,7 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -133,6 +134,54 @@ impl TaskManager {
         inner.tasks[cur].change_program_brk(size)
     }
 
+    /// Record one invocation of the given syscall for the current task.
+    fn record_current_syscall(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        if syscall_id < inner.tasks[cur].syscall_times.len() {
+            inner.tasks[cur].syscall_times[syscall_id] += 1;
+        }
+    }
+
+    /// Read the invocation count of the given syscall for the current task.
+    fn get_current_syscall_times(&self, syscall_id: usize) -> u32 {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        if syscall_id < inner.tasks[cur].syscall_times.len() {
+            inner.tasks[cur].syscall_times[syscall_id]
+        } else {
+            0
+        }
+    }
+
+    /// mmap a range of user pages in the current task's address space.
+    fn current_mmap(&self, start: VirtAddr, end: VirtAddr, perm: MapPermission) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].memory_set.mmap(start, end, perm)
+    }
+
+    /// munmap a range of user pages in the current task's address space.
+    fn current_munmap(&self, start: VirtAddr, end: VirtAddr) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].memory_set.munmap(start, end)
+    }
+
+    /// Read one byte from the current task's user address space, checking R+U flags.
+    fn current_read_user_byte(&self, va: VirtAddr) -> Option<u8> {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].memory_set.read_user_byte(va)
+    }
+
+    /// Write one byte into the current task's user address space, checking W+U flags.
+    fn current_write_user_byte(&self, va: VirtAddr, byte: u8) -> bool {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].memory_set.write_user_byte(va, byte)
+    }
+
     /// Switch current `Running` task to the task we have found,
     /// or there is no `Ready` task and we can exit with all applications completed
     fn run_next_task(&self) {
@@ -201,4 +250,34 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Record a syscall invocation for the current task.
+pub fn record_syscall(syscall_id: usize) {
+    TASK_MANAGER.record_current_syscall(syscall_id);
+}
+
+/// Get the invocation count of `syscall_id` for the current task.
+pub fn get_syscall_times(syscall_id: usize) -> u32 {
+    TASK_MANAGER.get_current_syscall_times(syscall_id)
+}
+
+/// mmap a range of user pages in the current task's address space.
+pub fn mmap_current(start: VirtAddr, end: VirtAddr, perm: MapPermission) -> isize {
+    TASK_MANAGER.current_mmap(start, end, perm)
+}
+
+/// munmap a range of user pages in the current task's address space.
+pub fn munmap_current(start: VirtAddr, end: VirtAddr) -> isize {
+    TASK_MANAGER.current_munmap(start, end)
+}
+
+/// Read one byte from the current task's user address space.
+pub fn read_user_byte_current(va: VirtAddr) -> Option<u8> {
+    TASK_MANAGER.current_read_user_byte(va)
+}
+
+/// Write one byte to the current task's user address space.
+pub fn write_user_byte_current(va: VirtAddr, byte: u8) -> bool {
+    TASK_MANAGER.current_write_user_byte(va, byte)
 }
