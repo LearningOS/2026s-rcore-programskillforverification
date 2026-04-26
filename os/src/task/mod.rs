@@ -115,3 +115,13 @@ lazy_static! {
 pub fn add_initproc() {
     add_task(INITPROC.clone());
 }
+
+/// Record a syscall invocation for the current task.
+pub fn record_syscall(syscall_id: usize) {
+    if let Some(task) = current_task() {
+        let mut inner = task.inner_exclusive_access();
+        if syscall_id < inner.syscall_times.len() {
+            inner.syscall_times[syscall_id] += 1;
+        }
+    }
+}
