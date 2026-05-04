@@ -111,6 +111,10 @@ impl EasyFileSystem {
         // release efs lock
         Inode::new(block_id, block_offset, Arc::clone(efs), block_device)
     }
+    /// Get the starting block of the inode area
+    pub fn inode_area_start_block(&self) -> u32 {
+        self.inode_area_start_block
+    }
     /// Get inode by id
     pub fn get_disk_inode_pos(&self, inode_id: u32) -> (u32, usize) {
         let inode_size = core::mem::size_of::<DiskInode>();
