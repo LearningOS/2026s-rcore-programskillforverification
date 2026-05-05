@@ -49,6 +49,20 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// deadlock detection enable flag
+    pub deadlock_detect: bool,
+    /// available vector for mutexes
+    pub mutex_available: Vec<usize>,
+    /// allocation matrix for mutexes: row = tid, col = mutex id
+    pub mutex_allocation: Vec<Vec<usize>>,
+    /// need matrix for mutexes
+    pub mutex_need: Vec<Vec<usize>>,
+    /// available vector for semaphores
+    pub semaphore_available: Vec<usize>,
+    /// allocation matrix for semaphores
+    pub semaphore_allocation: Vec<Vec<usize>>,
+    /// need matrix for semaphores
+    pub semaphore_need: Vec<Vec<usize>>,
 }
 
 impl ProcessControlBlockInner {
@@ -81,6 +95,112 @@ impl ProcessControlBlockInner {
     /// get a task with tid in this process
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
+    }
+
+    /// Ensure mutex matrices include a row for the given tid.
+    pub fn ensure_mutex_thread(&mut self, tid: usize) {
+        let m = self.mutex_available.len();
+        while self.mutex_allocation.len() <= tid {
+            self.mutex_allocation.push(vec![0; m]);
+            self.mutex_need.push(vec![0; m]);
+        }
+    }
+
+    /// Ensure semaphore matrices include a row for the given tid.
+    pub fn ensure_semaphore_thread(&mut self, tid: usize) {
+        let m = self.semaphore_available.len();
+        while self.semaphore_allocation.len() <= tid {
+            self.semaphore_allocation.push(vec![0; m]);
+            self.semaphore_need.push(vec![0; m]);
+        }
+    }
+
+    /// Register a mutex resource (capacity = 1) at index `mid`.
+    pub fn register_mutex_resource(&mut self, mid: usize) {
+        while self.mutex_available.len() <= mid {
+            self.mutex_available.push(0);
+            for row in self.mutex_allocation.iter_mut() {
+                row.push(0);
+            }
+            for row in self.mutex_need.iter_mut() {
+                row.push(0);
+            }
+        }
+        self.mutex_available[mid] = 1;
+        for row in self.mutex_allocation.iter_mut() {
+            row[mid] = 0;
+        }
+        for row in self.mutex_need.iter_mut() {
+            row[mid] = 0;
+        }
+    }
+
+    /// Register a semaphore resource with the given capacity at index `sid`.
+    pub fn register_semaphore_resource(&mut self, sid: usize, capacity: usize) {
+        while self.semaphore_available.len() <= sid {
+            self.semaphore_available.push(0);
+            for row in self.semaphore_allocation.iter_mut() {
+                row.push(0);
+            }
+            for row in self.semaphore_need.iter_mut() {
+                row.push(0);
+            }
+        }
+        self.semaphore_available[sid] = capacity;
+        for row in self.semaphore_allocation.iter_mut() {
+            row[sid] = 0;
+        }
+        for row in self.semaphore_need.iter_mut() {
+            row[sid] = 0;
+        }
+    }
+
+    /// Run Banker's-style safety check on the supplied state.
+    fn is_safe(available: &[usize], allocation: &[Vec<usize>], need: &[Vec<usize>]) -> bool {
+        let n = allocation.len();
+        let m = available.len();
+        let mut work = available.to_vec();
+        let mut finish = vec![false; n];
+        loop {
+            let mut progressed = false;
+            for i in 0..n {
+                if finish[i] {
+                    continue;
+                }
+                let mut ok = true;
+                for j in 0..m {
+                    if need[i][j] > work[j] {
+                        ok = false;
+                        break;
+                    }
+                }
+                if ok {
+                    for j in 0..m {
+                        work[j] += allocation[i][j];
+                    }
+                    finish[i] = true;
+                    progressed = true;
+                }
+            }
+            if !progressed {
+                break;
+            }
+        }
+        finish.iter().all(|&f| f)
+    }
+
+    /// Check whether the current mutex state is safe (no deadlock).
+    pub fn mutex_state_safe(&self) -> bool {
+        Self::is_safe(&self.mutex_available, &self.mutex_allocation, &self.mutex_need)
+    }
+
+    /// Check whether the current semaphore state is safe (no deadlock).
+    pub fn semaphore_state_safe(&self) -> bool {
+        Self::is_safe(
+            &self.semaphore_available,
+            &self.semaphore_allocation,
+            &self.semaphore_need,
+        )
     }
 }
 
@@ -119,6 +239,13 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect: false,
+                    mutex_available: Vec::new(),
+                    mutex_allocation: Vec::new(),
+                    mutex_need: Vec::new(),
+                    semaphore_available: Vec::new(),
+                    semaphore_allocation: Vec::new(),
+                    semaphore_need: Vec::new(),
                 })
             },
         });
@@ -245,6 +372,13 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect: false,
+                    mutex_available: Vec::new(),
+                    mutex_allocation: Vec::new(),
+                    mutex_need: Vec::new(),
+                    semaphore_available: Vec::new(),
+                    semaphore_allocation: Vec::new(),
+                    semaphore_need: Vec::new(),
                 })
             },
         });
