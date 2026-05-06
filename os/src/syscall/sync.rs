@@ -4,21 +4,18 @@ use crate::timer::{add_timer, get_time_ms};
 use alloc::sync::Arc;
 /// sleep syscall
 pub fn sys_sleep(ms: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] tid[{}] sys_sleep",
-        current_task().unwrap().process.upgrade().unwrap().getpid(),
-        current_task()
-            .unwrap()
-            .inner_exclusive_access()
-            .res
-            .as_ref()
-            .unwrap()
-            .tid
-    );
+    let pid = current_task().unwrap().process.upgrade().unwrap().getpid();
+    let detect = current_process().inner_exclusive_access().deadlock_detect;
+    if detect {
+        println!("[kernel] SLEEP enter pid={} ms={}", pid, ms);
+    }
     let expire_ms = get_time_ms() + ms;
     let task = current_task().unwrap();
     add_timer(expire_ms, task);
     block_current_and_run_next();
+    if detect {
+        println!("[kernel] SLEEP exit pid={}", pid);
+    }
     0
 }
 /// mutex create syscall
